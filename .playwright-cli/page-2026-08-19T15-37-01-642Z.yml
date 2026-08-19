@@ -1,0 +1,33 @@
+- generic [ref=e1]:
+  - generic "Interaktive Baumansicht" [ref=e2]
+  - main [ref=e3]:
+    - paragraph [ref=e4]: Three.js MVP
+    - heading "Duftschatten" [level=1] [ref=e5]
+    - paragraph [ref=e6]: Duftpartikel entstehen laufend auf den Bäumen und folgen anschließend einem gemeinsamen Windstrom.
+    - generic [ref=e7]:
+      - generic [ref=e8]:
+        - generic [ref=e9]: Baummodell
+        - combobox "Baummodell" [ref=e10]:
+          - option "Tree" [selected]
+          - option "Pine Tree"
+          - option "Fall Tree"
+      - generic [ref=e11]:
+        - generic [ref=e12]:
+          - text: Partikel
+          - status [ref=e13]: "8.000"
+        - slider "Partikel" [ref=e14]: "8000"
+      - button "Partikel neu setzen" [ref=e15] [cursor=pointer]
+      - generic [ref=e16]:
+        - generic [ref=e17]:
+          - text: Bäume
+          - status [ref=e18]: "15"
+        - slider "Bäume" [ref=e19]: "15"
+      - button "Bäume einblenden" [active] [pressed] [ref=e26] [cursor=pointer]
+    - paragraph [ref=e21]: Kontinuierlicher Wind · Lebensdauer 4–8 Sekunden
+    - paragraph [ref=e22]:
+      - text: "Gerendert:"
+      - strong [ref=e23]: "8.000"
+      - text: Partikel · 1 Drawcall
+    - paragraph [ref=e24]:
+      - link "\"Tree\" von Poly by Google · CC-BY 3.0" [ref=e25] [cursor=pointer]:
+        - /url: https://poly.pizza/m/6pwiq7hSrHr

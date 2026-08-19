@@ -1,0 +1,56 @@
+<!-- Minimal document shell for the Three.js scent-particle prototype. -->
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#e8eee6" />
+    <link rel="icon" href="data:," />
+    <title>Duftschatten</title>
+  </head>
+  <body>
+    <canvas id="scene" aria-label="Interaktive Baumansicht"></canvas>
+
+    <main class="panel">
+      <p class="eyebrow">Three.js MVP</p>
+      <h1>Duftschatten</h1>
+      <p class="intro">
+        Duftpartikel entstehen laufend auf den Bäumen und folgen anschließend einem
+        gemeinsamen Windstrom.
+      </p>
+
+      <div class="controls">
+        <div class="control-group">
+          <label for="model">Baummodell</label>
+          <select id="model"></select>
+        </div>
+
+        <div class="control-group">
+          <label for="particle-count">
+            Partikel je Baum <output id="particle-value" for="particle-count">1.000</output>
+          </label>
+          <input id="particle-count" type="range" step="100" />
+        </div>
+
+        <button id="resample" type="button">Partikel neu setzen</button>
+
+        <div class="control-group">
+          <label for="forest-count">
+            Bäume <output id="forest-value" for="forest-count">1</output>
+          </label>
+          <input id="forest-count" type="range" step="1" value="1" />
+        </div>
+
+        <button id="tree-visibility" type="button">Bäume ausblenden</button>
+      </div>
+
+      <p id="status" class="phase" aria-live="polite">Modell wird geladen …</p>
+      <p class="performance">
+        Gerendert: <strong id="rendered-particles">0</strong> Partikel · 1 Drawcall
+      </p>
+      <p id="attribution" class="attribution"></p>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
