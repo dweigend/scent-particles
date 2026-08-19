@@ -4,73 +4,108 @@
  */
 
 import { Group, InstancedMesh, Matrix4, Quaternion, Vector3 } from "three";
-import { disposeModel, type LoadedModel } from "./models";
+import {
+  createGroundFootprintFromTransform,
+  type GroundFootprint,
+} from "./ground-footprints";
+import { disposeLoadedModel, type LoadedModel } from "./model-loader";
+import type { ScentParticleSettings, ScentSource } from "./scent-particles";
 
+export const MIN_TREE_COUNT = 1;
 export const MAX_TREE_COUNT = 30;
+export const DEFAULT_TREE_COUNT = 1;
 
 const FOREST_SEED = 58_219;
 const FOREST_RADIUS = 6.5;
 const MIN_TREE_DISTANCE = 1.35;
+const TREE_PARTICLE_SETTINGS: ScentParticleSettings = {
+  attachmentSeconds: { minimum: 1, maximum: 1 },
+  lifetimeSeconds: { minimum: 4, maximum: 8 },
+  pointSize: { minimum: 10, maximum: 21 },
+  color: { minimum: 0x14752e, maximum: 0x5cf073 },
+};
 
 export class Forest {
-  readonly object = new Group();
-  readonly asset;
-  readonly surface;
+  readonly sceneObject = new Group();
+  readonly asset: LoadedModel["asset"];
 
-  private readonly placements = createPlacements(MAX_TREE_COUNT, FOREST_SEED);
-  private readonly meshes: readonly InstancedMesh[];
-  private treeCount = 1;
+  private readonly placementTransforms = createTreeTransforms(MAX_TREE_COUNT, FOREST_SEED);
+  private readonly groundFootprints: readonly GroundFootprint[];
+  private readonly instancedMeshes: readonly InstancedMesh[];
+  private treeCount = DEFAULT_TREE_COUNT;
 
-  constructor(private readonly model: LoadedModel) {
-    this.asset = model.asset;
-    this.surface = model.surface;
-    this.meshes = model.parts.map((part) => this.createInstances(part));
+  constructor(private readonly loadedModel: LoadedModel) {
+    this.asset = loadedModel.asset;
+    this.groundFootprints = this.placementTransforms.map((placementTransform) =>
+      createGroundFootprintFromTransform(
+        placementTransform,
+        loadedModel.groundFootprintRadius,
+      ),
+    );
+    this.instancedMeshes = loadedModel.meshParts.map((meshPart) =>
+      this.createInstancedMesh(meshPart),
+    );
   }
 
   setCount(count: number): void {
-    this.treeCount = Math.min(MAX_TREE_COUNT, Math.max(1, Math.floor(count)));
-    for (const mesh of this.meshes) mesh.count = this.treeCount;
+    this.treeCount = Math.min(MAX_TREE_COUNT, Math.max(MIN_TREE_COUNT, Math.floor(count)));
+    for (const instancedMesh of this.instancedMeshes) instancedMesh.count = this.treeCount;
   }
 
   setVisible(visible: boolean): void {
-    this.object.visible = visible;
+    this.sceneObject.visible = visible;
   }
 
-  getActivePlacements(): readonly Matrix4[] {
-    return this.placements.slice(0, this.treeCount);
+  getCount(): number {
+    return this.treeCount;
+  }
+
+  getGroundFootprints(): readonly GroundFootprint[] {
+    return this.groundFootprints.slice(0, this.treeCount);
+  }
+
+  getScentSource(): ScentSource {
+    return {
+      samplingSurface: this.loadedModel.samplingSurface,
+      particleSettings: TREE_PARTICLE_SETTINGS,
+      emitters: this.placementTransforms.slice(0, this.treeCount).map((transform) => ({
+        kind: "static",
+        transform,
+      })),
+    };
   }
 
   dispose(): void {
-    for (const mesh of this.meshes) mesh.dispose();
-    disposeModel(this.model);
+    for (const instancedMesh of this.instancedMeshes) instancedMesh.dispose();
+    disposeLoadedModel(this.loadedModel);
   }
 
-  private createInstances(part: LoadedModel["parts"][number]): InstancedMesh {
-    const mesh = new InstancedMesh(part.geometry, part.material, MAX_TREE_COUNT);
+  private createInstancedMesh(meshPart: LoadedModel["meshParts"][number]): InstancedMesh {
+    const mesh = new InstancedMesh(meshPart.geometry, meshPart.material, MAX_TREE_COUNT);
     const matrix = new Matrix4();
     for (let index = 0; index < MAX_TREE_COUNT; index += 1) {
-      matrix.multiplyMatrices(this.placements[index]!, part.matrix);
+      matrix.multiplyMatrices(this.placementTransforms[index]!, meshPart.matrix);
       mesh.setMatrixAt(index, matrix);
     }
     mesh.instanceMatrix.needsUpdate = true;
     mesh.count = this.treeCount;
     mesh.computeBoundingBox();
     mesh.computeBoundingSphere();
-    this.object.add(mesh);
+    this.sceneObject.add(mesh);
     return mesh;
   }
 }
 
-function createPlacements(count: number, seed: number): readonly Matrix4[] {
-  const random = createRandom(seed);
-  const positions = createPositions(count, random);
+function createTreeTransforms(count: number, seed: number): readonly Matrix4[] {
+  const random = createSeededRandom(seed);
+  const positions = createTreePositions(count, random);
   return positions.map((position, index) => createTransform(position, index, random));
 }
 
-function createPositions(count: number, random: () => number): readonly Vector3[] {
+function createTreePositions(count: number, random: () => number): readonly Vector3[] {
   const positions = [new Vector3()];
   while (positions.length < count) {
-    const candidate = randomPoint(random);
+    const candidate = createRandomForestPoint(random);
     if (positions.every((position) => position.distanceTo(candidate) >= MIN_TREE_DISTANCE)) {
       positions.push(candidate);
     }
@@ -78,7 +113,7 @@ function createPositions(count: number, random: () => number): readonly Vector3[
   return positions;
 }
 
-function randomPoint(random: () => number): Vector3 {
+function createRandomForestPoint(random: () => number): Vector3 {
   const angle = random() * Math.PI * 2;
   const radius = Math.sqrt(random()) * FOREST_RADIUS;
   return new Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
@@ -91,7 +126,7 @@ function createTransform(position: Vector3, index: number, random: () => number)
   return new Matrix4().compose(position, rotation, new Vector3(scale, scale, scale));
 }
 
-function createRandom(seed: number): () => number {
+function createSeededRandom(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
     state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;

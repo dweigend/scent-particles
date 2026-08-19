@@ -121,7 +121,7 @@ button:hover {
   background: #edf5ef;
 }
 
-.phase {
+.status {
   min-height: 20px;
   margin: 16px 0 5px;
   color: #1d6548;

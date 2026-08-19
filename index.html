@@ -9,44 +9,52 @@
     <title>Duftschatten</title>
   </head>
   <body>
-    <canvas id="scene" aria-label="Interaktive Baumansicht"></canvas>
+    <canvas id="scene" aria-label="Interaktive Waldansicht mit bewegten Tieren"></canvas>
 
     <main class="panel">
       <p class="eyebrow">Three.js MVP</p>
       <h1>Duftschatten</h1>
       <p class="intro">
-        Duftpartikel entstehen laufend auf den Bäumen und folgen anschließend einem
-        gemeinsamen Windstrom.
+        Baumpartikel haften eine Sekunde an der Oberfläche. Tierpartikel lösen sich sofort.
+        Danach folgen alle einem gemeinsamen Windstrom.
       </p>
 
       <div class="controls">
         <div class="control-group">
-          <label for="model">Baummodell</label>
-          <select id="model"></select>
+          <label for="tree-asset">Baumart</label>
+          <select id="tree-asset"></select>
         </div>
 
         <div class="control-group">
-          <label for="particle-count">
-            Partikel je Baum <output id="particle-value" for="particle-count">1.000</output>
+          <label for="particles-per-emitter">
+            Partikel je Objekt
+            <output id="particles-per-emitter-value" for="particles-per-emitter">1.000</output>
           </label>
-          <input id="particle-count" type="range" step="100" />
+          <input id="particles-per-emitter" type="range" />
         </div>
 
         <button id="resample" type="button">Partikel neu setzen</button>
 
         <div class="control-group">
-          <label for="forest-count">
-            Bäume <output id="forest-value" for="forest-count">1</output>
+          <label for="tree-count">
+            Bäume <output id="tree-count-value" for="tree-count">1</output>
           </label>
-          <input id="forest-count" type="range" step="1" value="1" />
+          <input id="tree-count" type="range" />
+        </div>
+
+        <div class="control-group">
+          <label for="animal-count">
+            Tiere <output id="animal-count-value" for="animal-count">2</output>
+          </label>
+          <input id="animal-count" type="range" />
         </div>
 
         <button id="tree-visibility" type="button">Bäume ausblenden</button>
       </div>
 
-      <p id="status" class="phase" aria-live="polite">Modell wird geladen …</p>
+      <p id="status" class="status" aria-live="polite">Wald und Tiere werden geladen …</p>
       <p class="performance">
-        Gerendert: <strong id="rendered-particles">0</strong> Partikel · 1 Drawcall
+        Gerendert: <strong id="rendered-particle-count">0</strong> Partikel · 1 Drawcall
       </p>
       <p id="attribution" class="attribution"></p>
     </main>
