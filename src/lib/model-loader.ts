@@ -17,7 +17,7 @@ import {
   Vector3,
 } from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import type { ModelAsset } from "./model-assets";
+import type { ModelSettings } from "./settings";
 
 const loader = new GLTFLoader();
 
@@ -28,7 +28,7 @@ export type ModelMeshPart = Readonly<{
 }>;
 
 export type LoadedModel = Readonly<{
-  asset: ModelAsset;
+  settings: ModelSettings;
   root: Object3D;
   animations: readonly AnimationClip[];
   meshParts: readonly ModelMeshPart[];
@@ -36,14 +36,14 @@ export type LoadedModel = Readonly<{
   groundFootprintRadius: number;
 }>;
 
-export async function loadModelAsset(asset: ModelAsset): Promise<LoadedModel> {
-  const { scene, animations } = await loader.loadAsync(asset.modelPath);
-  normalizeModel(scene, asset.targetHeight);
+export async function loadModel(settings: ModelSettings): Promise<LoadedModel> {
+  const { scene, animations } = await loader.loadAsync(settings.path);
+  normalizeModel(scene, settings.targetHeight);
   const meshParts = collectMeshParts(scene);
-  if (meshParts.length === 0) throw new Error("3D-Datei ungültig.");
+  if (meshParts.length === 0) throw new Error("Invalid 3D asset.");
   const samplingSurface = createSamplingSurface(meshParts);
   return {
-    asset,
+    settings,
     root: scene,
     animations,
     meshParts,
@@ -74,7 +74,7 @@ export function disposeSkeletons(root: Object3D): void {
 function normalizeModel(root: Object3D, targetHeight: number): void {
   const initialBounds = new Box3().setFromObject(root);
   const height = initialBounds.getSize(new Vector3()).y;
-  if (height <= 0) throw new Error("3D-Datei ungültig.");
+  if (height <= 0) throw new Error("Invalid 3D asset.");
 
   root.scale.setScalar(targetHeight / height);
   root.updateMatrixWorld(true);

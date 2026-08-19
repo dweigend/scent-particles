@@ -16,7 +16,7 @@ import {
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-export type SceneContext = Readonly<{
+type SceneContext = Readonly<{
   scene: Scene;
   camera: PerspectiveCamera;
   renderer: WebGLRenderer;
@@ -24,7 +24,7 @@ export type SceneContext = Readonly<{
   pixelRatio: number;
 }>;
 
-export function createScene(canvas: HTMLCanvasElement): SceneContext {
+export function createScene(canvas: HTMLCanvasElement, maximumPixelRatio: number): SceneContext {
   const scene = new Scene();
   scene.background = new Color(0xe8eee6);
 
@@ -33,7 +33,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneContext {
 
   const renderer = new WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
   renderer.outputColorSpace = "srgb";
-  const pixelRatio = Math.min(window.devicePixelRatio, 1.5);
+  const pixelRatio = Math.min(window.devicePixelRatio, maximumPixelRatio);
   renderer.setPixelRatio(pixelRatio);
 
   const controls = new OrbitControls(camera, canvas);

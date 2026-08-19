@@ -12,45 +12,14 @@
     <canvas id="scene" aria-label="Interaktive Waldansicht mit bewegten Tieren"></canvas>
 
     <main class="panel">
-      <p class="eyebrow">Three.js MVP</p>
       <h1>Duftschatten</h1>
       <p class="intro">
         Baumpartikel haften eine Sekunde an der Oberfläche. Tierpartikel lösen sich sofort.
         Danach folgen alle einem gemeinsamen Windstrom.
       </p>
 
-      <div class="controls">
-        <div class="control-group">
-          <label for="tree-asset">Baumart</label>
-          <select id="tree-asset"></select>
-        </div>
-
-        <div class="control-group">
-          <label for="particles-per-emitter">
-            Partikel je Objekt
-            <output id="particles-per-emitter-value" for="particles-per-emitter">1.000</output>
-          </label>
-          <input id="particles-per-emitter" type="range" />
-        </div>
-
-        <button id="resample" type="button">Partikel neu setzen</button>
-
-        <div class="control-group">
-          <label for="tree-count">
-            Bäume <output id="tree-count-value" for="tree-count">1</output>
-          </label>
-          <input id="tree-count" type="range" />
-        </div>
-
-        <div class="control-group">
-          <label for="animal-count">
-            Tiere <output id="animal-count-value" for="animal-count">2</output>
-          </label>
-          <input id="animal-count" type="range" />
-        </div>
-
-        <button id="tree-visibility" type="button">Bäume ausblenden</button>
-      </div>
+      <div id="controls" class="controls"></div>
+      <button id="resample" type="button">Partikel neu setzen</button>
 
       <p id="status" class="status" aria-live="polite">Wald und Tiere werden geladen …</p>
       <p class="performance">

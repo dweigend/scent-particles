@@ -187,7 +187,7 @@ function createFallbackRoutes(
     );
     if (valid) return routes;
   }
-  throw new Error("Keine sichere Bodenroute.");
+  throw new Error("No safe ground route found.");
 }
 
 function createPhasedCircleRoutes(

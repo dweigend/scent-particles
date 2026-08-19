@@ -1,6 +1,6 @@
 /**
- * Defines the universal circular footprint used by procedural ground movement.
- * Rendering details and vertical geometry deliberately stay outside this contract.
+ * Defines the reusable circular footprint used by procedural ground movement.
+ * It represents upright objects on the XZ plane; rendering and vertical geometry stay outside.
  */
 
 import type { Matrix4 } from "three";

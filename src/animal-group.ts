@@ -5,25 +5,16 @@
 
 import { type AnimationClip, AnimationMixer, Group, type Object3D } from "three";
 import { clone } from "three/addons/utils/SkeletonUtils.js";
-import type { GroundFootprint } from "./ground-footprints";
-import { planGroundRoutes } from "./ground-route-planner";
-import { disposeLoadedModel, disposeSkeletons, type LoadedModel } from "./model-loader";
-import { MovementRouteAtlas } from "./movement-route-atlas";
-import type { ScentParticleSettings, ScentSource } from "./scent-particles";
-
-export const MIN_ANIMAL_COUNT = 1;
-export const MAX_ANIMAL_COUNT = 10;
-export const DEFAULT_ANIMAL_COUNT = 2;
-
-const MOVEMENT_SPEED = 1.65;
-const WALK_ANIMATION_SPEED = 1.45;
-const GROUND_CLEARANCE = 0.28;
-const ANIMAL_PARTICLE_SETTINGS: ScentParticleSettings = {
-  attachmentSeconds: { minimum: 0, maximum: 0 },
-  lifetimeSeconds: { minimum: 4, maximum: 8 },
-  pointSize: { minimum: 10, maximum: 21 },
-  color: { minimum: 0x4a2d18, maximum: 0xb17a46 },
-};
+import type { GroundFootprint } from "./lib/ground-footprints";
+import { planGroundRoutes } from "./lib/ground-route-planner";
+import { disposeLoadedModel, disposeSkeletons, type LoadedModel } from "./lib/model-loader";
+import { MovementRouteAtlas } from "./lib/movement-route-atlas";
+import type { RoutedScentSource } from "./lib/scent-particle-system";
+import {
+  clampNumberSetting,
+  type GroundRouteObjectGroupSettings,
+  type ModelSettings,
+} from "./lib/settings";
 
 type AnimalInstance = Readonly<{
   movementRoot: Group;
@@ -31,33 +22,45 @@ type AnimalInstance = Readonly<{
   mixer: AnimationMixer;
 }>;
 
+type AnimalGroupOptions = Readonly<{
+  loadedModel: LoadedModel;
+  settings: GroundRouteObjectGroupSettings;
+  footprints: readonly GroundFootprint[];
+  initialCount?: number;
+}>;
+
 export class AnimalGroup {
   readonly sceneObject = new Group();
-  readonly asset: LoadedModel["asset"];
+  readonly modelSettings: ModelSettings;
 
   private readonly animalInstances: AnimalInstance[] = [];
+  private readonly loadedModel: LoadedModel;
+  private readonly settings: GroundRouteObjectGroupSettings;
   private readonly walkClip: AnimationClip;
   private activeCount: number;
   private routeAtlas: MovementRouteAtlas;
 
-  constructor(
-    private readonly loadedModel: LoadedModel,
-    footprints: readonly GroundFootprint[],
-    initialCount = DEFAULT_ANIMAL_COUNT,
-  ) {
-    const walkClip = loadedModel.animations.find(({ name }) => name === "Walk");
-    if (!walkClip) throw new Error("Laufanimation fehlt.");
+  constructor(options: AnimalGroupOptions) {
+    this.loadedModel = options.loadedModel;
+    this.settings = options.settings;
+    const walkClip = options.loadedModel.animations.find(
+      ({ name }) => name === options.settings.behavior.animationClip,
+    );
+    if (!walkClip) throw new Error("Required animation clip missing.");
     this.walkClip = walkClip;
-    this.asset = loadedModel.asset;
-    this.activeCount = clampAnimalCount(initialCount);
-    this.routeAtlas = this.createRouteAtlas(footprints, this.activeCount);
+    this.modelSettings = options.loadedModel.settings;
+    this.activeCount = clampNumberSetting(
+      options.initialCount ?? options.settings.count.initial,
+      options.settings.count,
+    );
+    this.routeAtlas = this.createRouteAtlas(options.footprints, this.activeCount);
     this.ensureInstanceCount(this.activeCount);
     this.updateVisibility();
     this.update(0, 0);
   }
 
   setCount(count: number, footprints: readonly GroundFootprint[]): void {
-    const nextCount = clampAnimalCount(count);
+    const nextCount = clampNumberSetting(count, this.settings.count);
     const nextRouteAtlas = this.createRouteAtlas(footprints, nextCount);
     this.ensureInstanceCount(nextCount);
 
@@ -68,34 +71,32 @@ export class AnimalGroup {
     previousRouteAtlas.dispose();
   }
 
-  getCount(): number {
-    return this.activeCount;
+  setVisible(visible: boolean): void {
+    this.sceneObject.visible = visible;
   }
 
   getRouteAtlas(): MovementRouteAtlas {
     return this.routeAtlas;
   }
 
-  getScentSource(): ScentSource {
+  getScentSource(particlesPerObject: number): RoutedScentSource {
     return {
       samplingSurface: this.loadedModel.samplingSurface,
-      particleSettings: ANIMAL_PARTICLE_SETTINGS,
-      emitters: this.routeAtlas.routeHandles.map((routeHandle) => ({
-        kind: "route",
-        routeHandle,
-      })),
+      particlesPerObject,
+      particleProperties: this.settings.scent.properties,
+      routeHandles: this.routeAtlas.routeHandles,
     };
   }
 
-  update(elapsedTime: number, deltaTime: number): void {
+  update(elapsedSeconds: number, deltaSeconds: number): void {
     for (let index = 0; index < this.activeCount; index += 1) {
       const animalInstance = this.animalInstances[index]!;
       this.routeAtlas.writeMatrixAtTime(
         this.routeAtlas.routeHandles[index]!,
-        elapsedTime,
+        elapsedSeconds,
         animalInstance.movementRoot.matrix,
       );
-      animalInstance.mixer.update(deltaTime);
+      animalInstance.mixer.update(deltaSeconds);
     }
   }
 
@@ -116,9 +117,9 @@ export class AnimalGroup {
     const routes = planGroundRoutes(footprints, {
       routeCount,
       moverRadius: this.loadedModel.groundFootprintRadius,
-      clearance: GROUND_CLEARANCE,
+      clearance: this.settings.behavior.clearance,
     });
-    return new MovementRouteAtlas(routes, MOVEMENT_SPEED);
+    return new MovementRouteAtlas(routes, this.settings.behavior.movementSpeed);
   }
 
   private ensureInstanceCount(count: number): void {
@@ -136,7 +137,7 @@ export class AnimalGroup {
     this.sceneObject.add(movementRoot);
 
     mixer.clipAction(this.walkClip).play();
-    mixer.timeScale = WALK_ANIMATION_SPEED;
+    mixer.timeScale = this.settings.behavior.animationSpeed;
     mixer.setTime(this.walkClip.duration * ((index * 0.37) % 1));
     return { movementRoot, animatedModel, mixer };
   }
@@ -146,8 +147,4 @@ export class AnimalGroup {
       this.animalInstances[index]!.movementRoot.visible = index < this.activeCount;
     }
   }
-}
-
-function clampAnimalCount(count: number): number {
-  return Math.min(MAX_ANIMAL_COUNT, Math.max(MIN_ANIMAL_COUNT, Math.floor(count)));
 }

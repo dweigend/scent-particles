@@ -1,31 +1,96 @@
-# Duftschatten MVP
+# Scent Particles
 
-Ein bewusst kleiner Three.js-Prototyp: Bis zu 5.000 Duftpartikel je Objekt entstehen kontinuierlich auf statischen Bäumen und einer frei einstellbaren Anzahl bewegter Tiere. Baumpartikel haften zunächst an der Oberfläche, Tierpartikel werden sofort freigesetzt. Anschließend folgen alle demselben Windstrom. Ein einfacher Waldmodus verteilt bis zu 30 Bauminstanzen deterministisch auf der Landschaft.
+A small Three.js reference project for visualizing scent particles emitted by static and moving 3D objects.
 
-## Start
+![Default scene with one tree and two deer](docs/images/default-scene.png)
+
+![Stress test with 200,000 scent particles](docs/images/stress-test.png)
+
+## Run
 
 ```bash
 bun install
 bun run dev
 ```
 
-## Technischer Umfang
+`bun run build` runs TypeScript checking before the Vite production build.
 
-- Three.js mit `GLTFLoader` und dem offiziellen `MeshSurfaceSampler`
-- ein `THREE.Points`-Drawcall für alle Partikel
-- kontinuierliche Lebensdauer von vier bis acht Sekunden im GPU-Shader
-- sofort abgelöste braune Tierpartikel und eine Sekunde haftende grüne Baumpartikel
-- einheitliche Zahlenbereiche für Haftzeit, Lebensdauer, Größe und Farbe je Objektgruppe
-- ein bis zehn skelettanimierte Tiere auf prozedural erzeugten Routen
-- universelle Kreis-Fußabdrücke für statische und bewegte Bodenobjekte
-- gebackene gegenseitige Abstandsprüfung ohne Physics- oder Steering-Loop
-- ein kleiner statischer Route-Atlas für Tierinstanzen und die Geburtsorte ihrer Partikel
-- ein langsames kohärentes Windfeld statt zufälliger Einzelbewegungen
-- zufällige Farbvarianz innerhalb der jeweiligen Objektgruppe
-- `InstancedMesh`-Wald mit einmalig erzeugten, stabilen Zufallspositionen
-- geteilte Tier-Geometrien und -Materialien; unabhängige Skelette via `SkeletonUtils.clone()`
-- bis zu 200.000 Partikel für bewusste Belastungstests
-- keine Physics-Library, kein WebXR, kein Post-Processing
-- begrenzte Pixeldichte und keine Schatten für mobile GPU-Budgets
+## Architecture
 
-Die vier Beispielmodelle stammen von Poly Pizza. Details stehen in [`public/models/ATTRIBUTION.md`](public/models/ATTRIBUTION.md).
+```text
+src/
+├── lib/
+│   ├── settings.ts
+│   ├── scent-particle-system.ts
+│   ├── scent-particle.vert.glsl
+│   ├── scent-particle.frag.glsl
+│   ├── movement-route-atlas.ts
+│   ├── ground-route-planner.ts
+│   ├── ground-footprints.ts
+│   └── model-loader.ts
+├── main.ts
+├── ui.ts
+├── scene.ts
+├── tree-group.ts
+└── animal-group.ts
+```
+
+`src/lib` contains the reusable technical core:
+
+- `settings.ts` defines shared object-group, model, scent, and movement contracts.
+- `scent-particle-system.ts` owns the particle buffers, sampling, shader uniforms, and the single `THREE.Points` drawcall.
+- `movement-route-atlas.ts` shares route data between CPU object movement and GPU particle attachment.
+- `ground-route-planner.ts` creates closed routes around circular ground footprints.
+- `model-loader.ts` normalizes GLB models and prepares their render and sampling geometry.
+
+The demo adapters remain explicit. Static trees use `InstancedMesh`; animated animals use independent skeletons. Both expose the same scent-source structure without being forced into a generic runtime manager.
+
+## Contracts
+
+Object groups use one settings shape for models, count limits, scent properties, and behavior. `behavior.kind` distinguishes static placement from ground-route movement.
+
+The particle system accepts two source types:
+
+- `StaticScentSource` provides surface geometry and world transforms.
+- `RoutedScentSource` provides surface geometry and route handles.
+
+Routed sources are submitted together with their `MovementRouteAtlas`:
+
+```ts
+const scentParticleSystem = new ScentParticleSystem({
+  particleCapacity: getMaximumParticleCount(objectGroups),
+  pixelRatio,
+  wind,
+});
+
+scentParticleSystem.resample({
+  staticSources,
+  routedSources: { routeAtlas, sources: routedSources },
+});
+```
+
+The caller owns source geometry and route atlases. The particle system only disposes its own geometry, material, and fallback texture.
+
+## Performance
+
+- All scent particles render through one `BufferGeometry`, one `ShaderMaterial`, and one `THREE.Points` drawcall.
+- Capacity is allocated once from the configured maximum object and particle counts.
+- Particle lifecycle, attachment, wind, color, opacity, and size run in the vertex and fragment shaders.
+- Surface sampling and buffer uploads happen only when settings or sources change.
+- Static models use instancing; animated models share geometry and materials.
+- Animal movement and particle origins read the same precomputed route data.
+- Pixel ratio is capped; shadows, post-processing, physics, and per-particle JavaScript updates are omitted.
+
+At the configured maximum of 200,000 particles, the attribute buffers contain approximately 7.8 MB. Transparent particle overdraw can still become more expensive than the particle count itself.
+
+## Limits
+
+- Skinned-model particles sample the normalized base geometry, not the deformed animated mesh.
+- Routed movement is limited to upright objects on the XZ plane.
+- Route planning is synchronous setup work.
+- The prototype has not been performance-tested on physical PICO 4 hardware.
+- WebXR integration is intentionally outside this project.
+
+## Assets
+
+The GLB assets come from Poly Pizza. Licenses and source links are documented in [`public/models/ATTRIBUTION.md`](public/models/ATTRIBUTION.md) and displayed in the demo UI.

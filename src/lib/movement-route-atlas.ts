@@ -1,6 +1,6 @@
 /**
  * Stores sampled movement loops once for shared CPU and GPU playback.
- * The atlas is immutable after creation; route generation belongs to domain-specific modules.
+ * Routes are immutable, closed XZ loops; planning and scene ownership stay outside.
  */
 
 import {
@@ -18,7 +18,7 @@ export type RoutePoint = Readonly<{
 
 export type MovementRouteHandle = Readonly<{
   index: number;
-  duration: number;
+  durationSeconds: number;
 }>;
 
 type RouteInterpolation = Readonly<{
@@ -35,17 +35,22 @@ export class MovementRouteAtlas {
 
   private readonly routeSampleData: Float32Array;
 
-  constructor(routes: readonly (readonly RoutePoint[])[], maximumSpeed: number) {
+  constructor(routes: readonly (readonly RoutePoint[])[], movementSpeed: number) {
+    const sampleCount = getRouteSampleCount(routes, movementSpeed);
     this.routeCount = routes.length;
-    this.sampleCount = routes[0]!.length;
+    this.sampleCount = sampleCount;
     this.routeSampleData = createRouteSampleData(routes);
-    const sharedDuration = getLongestClosedLength(routes) / maximumSpeed;
-    this.routeHandles = routes.map((_, index) => ({ index, duration: sharedDuration }));
+    const durationSeconds = getLongestClosedLength(routes) / movementSpeed;
+    this.routeHandles = routes.map((_, index) => ({ index, durationSeconds }));
     this.texture = createRouteTexture(this.routeSampleData, this.sampleCount, this.routeCount);
   }
 
-  writeMatrixAtTime(handle: MovementRouteHandle, time: number, target: Matrix4): void {
-    const sample = wrap01(time / handle.duration) * this.sampleCount;
+  writeMatrixAtTime(
+    handle: MovementRouteHandle,
+    elapsedSeconds: number,
+    target: Matrix4,
+  ): void {
+    const sample = wrap01(elapsedSeconds / handle.durationSeconds) * this.sampleCount;
     const first = Math.floor(sample) % this.sampleCount;
     const second = (first + 1) % this.sampleCount;
     const blend = sample - Math.floor(sample);
@@ -66,6 +71,19 @@ function createRouteSampleData(routes: readonly (readonly RoutePoint[])[]): Floa
     writeRouteSampleData(routeSampleData, routes[routeIndex]!, routeIndex);
   }
   return routeSampleData;
+}
+
+function getRouteSampleCount(
+  routes: readonly (readonly RoutePoint[])[],
+  movementSpeed: number,
+): number {
+  const sampleCount = routes[0]?.length ?? 0;
+  const samplesMatch = routes.every((route) => route.length === sampleCount);
+  const routesHaveLength = routes.every((route) => getClosedLength(route) > 0);
+  if (sampleCount < 2 || !samplesMatch || !routesHaveLength || movementSpeed <= 0) {
+    throw new Error("Routes require equal samples, positive length, and positive speed.");
+  }
+  return sampleCount;
 }
 
 function writeRouteSampleData(

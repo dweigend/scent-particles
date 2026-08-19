@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "durf_2",
+      "name": "scent-particles",
       "dependencies": {
         "three": "^0.180.0",
       },

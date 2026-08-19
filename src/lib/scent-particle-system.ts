@@ -1,6 +1,6 @@
 /**
- * Implements one continuous scent drawcall for static and route-driven mesh emitters.
- * CPU work is limited to explicit sampling; attachment, release, and wind run on the GPU.
+ * Owns one preallocated GPU particle buffer for static and route-driven scent sources.
+ * Sampling is explicit CPU setup work; lifecycle, attachment, and wind run in one drawcall.
  */
 
 import {
@@ -21,167 +21,78 @@ import {
   Vector3,
 } from "three";
 import { MeshSurfaceSampler } from "three/addons/math/MeshSurfaceSampler.js";
+import fragmentShader from "./scent-particle.frag.glsl?raw";
+import vertexShader from "./scent-particle.vert.glsl?raw";
 import type { MovementRouteAtlas, MovementRouteHandle } from "./movement-route-atlas";
-
-export const MIN_PARTICLES_PER_EMITTER = 100;
-export const MAX_PARTICLES_PER_EMITTER = 5_000;
-export const DEFAULT_PARTICLES_PER_EMITTER = 1_000;
+import type { NumberRange, ScentParticleProperties, WindSettings } from "./settings";
 
 const SURFACE_OFFSET = 0.012;
+const surfaceSamplers = new WeakMap<BufferGeometry, MeshSurfaceSampler>();
 
-const vertexShader = /* glsl */ `
-  attribute float aAttachmentSeconds;
-  attribute vec3 aColor;
-  attribute float aLifetime;
-  attribute float aPhase;
-  attribute float aSize;
-  attribute vec2 aRouteHandle;
-
-  uniform float uTime;
-  uniform float uPixelRatio;
-  uniform sampler2D uRouteTexture;
-  uniform float uRouteSampleCount;
-  uniform float uRouteCount;
-
-  varying vec3 vColor;
-  varying float vOpacity;
-
-  const float WIND_SPEED = 0.38;
-
-  float smoothRange(float start, float end, float value) {
-    float t = clamp((value - start) / (end - start), 0.0, 1.0);
-    return t * t * (3.0 - 2.0 * t);
-  }
-
-  vec3 rotateY(vec3 point, vec2 heading) {
-    return vec3(
-      heading.y * point.x + heading.x * point.z,
-      point.y,
-      -heading.x * point.x + heading.y * point.z
-    );
-  }
-
-  vec4 routeSampleAt(float routeIndex, float time, float duration) {
-    float samplePosition = fract(time / duration) * uRouteSampleCount;
-    float firstIndex = floor(samplePosition);
-    float secondIndex = mod(firstIndex + 1.0, uRouteSampleCount);
-    float blend = fract(samplePosition);
-    float routeY = (routeIndex + 0.5) / uRouteCount;
-    vec4 first = texture2D(
-      uRouteTexture,
-      vec2((firstIndex + 0.5) / uRouteSampleCount, routeY)
-    );
-    vec4 second = texture2D(
-      uRouteTexture,
-      vec2((secondIndex + 0.5) / uRouteSampleCount, routeY)
-    );
-    vec2 heading = normalize(mix(first.zw, second.zw, blend));
-    return vec4(mix(first.xy, second.xy, blend), heading);
-  }
-
-  vec3 surfacePositionAt(float time) {
-    if (aRouteHandle.x < 0.0) return position;
-    vec4 route = routeSampleAt(aRouteHandle.x, time, aRouteHandle.y);
-    vec3 result = rotateY(position, route.zw);
-    result.x += route.x;
-    result.z += route.y;
-    return result;
-  }
-
-  void main() {
-    float age = mod(uTime + aPhase, aLifetime);
-    float flightAge = max(0.0, age - aAttachmentSeconds);
-    float release = aAttachmentSeconds == 0.0
-      ? 1.0
-      : smoothRange(0.0, 0.42, flightAge);
-    float surfaceTime = uTime - flightAge;
-    vec3 anchor = surfacePositionAt(surfaceTime);
-
-    vec3 wind = normalize(vec3(0.82, 0.12, -0.46));
-    vec3 crossWind = normalize(vec3(-wind.z, 0.0, wind.x));
-    float streamCoordinate = dot(anchor, vec3(0.31, 0.73, -0.24));
-    float broadWave = sin(uTime * 0.52 + streamCoordinate * 0.85);
-    float detailWave = sin(uTime * 1.18 + streamCoordinate * 2.1) * 0.34;
-    float gust = broadWave + detailWave;
-    float lift = sin(uTime * 0.63 + streamCoordinate * 1.05);
-
-    vec3 flowPosition = anchor + wind * flightAge * WIND_SPEED;
-    flowPosition += crossWind * gust * min(0.26, flightAge * 0.055);
-    flowPosition.y += lift * min(0.18, flightAge * 0.035);
-    vec3 animatedPosition = mix(anchor, flowPosition, release);
-
-    vec4 viewPosition = modelViewMatrix * vec4(animatedPosition, 1.0);
-    gl_Position = projectionMatrix * viewPosition;
-    gl_PointSize = aSize * uPixelRatio * (4.0 / max(1.0, -viewPosition.z));
-
-    float birth = smoothRange(0.0, 0.12, age);
-    float death = 1.0 - smoothRange(aLifetime - 0.65, aLifetime, age);
-    vColor = aColor;
-    vOpacity = birth * death * mix(0.34, 1.0, release);
-  }
-`;
-
-const fragmentShader = /* glsl */ `
-  varying vec3 vColor;
-  varying float vOpacity;
-
-  void main() {
-    float distanceToCenter = length(gl_PointCoord - vec2(0.5));
-    float circle = 1.0 - smoothstep(0.28, 0.5, distanceToCenter);
-    gl_FragColor = vec4(vColor, circle * vOpacity * 0.58);
-  }
-`;
-
-export type NumberRange = Readonly<{
-  minimum: number;
-  maximum: number;
-}>;
-
-export type ScentParticleSettings = Readonly<{
-  attachmentSeconds: NumberRange;
-  lifetimeSeconds: NumberRange;
-  pointSize: NumberRange;
-  color: NumberRange;
-}>;
-
-export type ScentEmitter =
-  | Readonly<{ kind: "static"; transform: Matrix4 }>
-  | Readonly<{ kind: "route"; routeHandle: MovementRouteHandle }>;
-
-export type ScentSource = Readonly<{
+type ScentSourceBase = Readonly<{
   samplingSurface: BufferGeometry;
-  emitters: readonly ScentEmitter[];
-  particleSettings: ScentParticleSettings;
+  particlesPerObject: number;
+  particleProperties: ScentParticleProperties;
 }>;
 
-export class ScentParticles {
+/** A rigid source whose transforms are sampled directly into world space. */
+export type StaticScentSource = ScentSourceBase &
+  Readonly<{ transforms: readonly Matrix4[] }>;
+
+/** A moving source whose local samples follow handles from one shared route atlas. */
+export type RoutedScentSource = ScentSourceBase &
+  Readonly<{ routeHandles: readonly MovementRouteHandle[] }>;
+
+export type RoutedScentSources = Readonly<{
+  routeAtlas: MovementRouteAtlas;
+  sources: readonly RoutedScentSource[];
+}>;
+
+/**
+ * Complete sampling input. Grouping routed sources with their atlas prevents missing route data.
+ * All routed sources deliberately share one atlas so the particle system remains one drawcall.
+ */
+export type ScentSourceSet = Readonly<{
+  staticSources: readonly StaticScentSource[];
+  routedSources?: RoutedScentSources;
+}>;
+
+export type ScentParticleSystemOptions = Readonly<{
+  particleCapacity: number;
+  pixelRatio: number;
+  wind: WindSettings;
+}>;
+
+export class ScentParticleSystem {
   readonly sceneObject: Points<BufferGeometry, ShaderMaterial>;
 
   private readonly fallbackRouteTexture = createFallbackRouteTexture();
+  private readonly particleCapacity: number;
   private renderedCount = 0;
 
-  constructor(pixelRatio: number, maximumEmitterCount: number) {
-    const geometry = createParticleGeometry(maximumEmitterCount * MAX_PARTICLES_PER_EMITTER);
+  constructor(options: ScentParticleSystemOptions) {
+    if (options.particleCapacity < 1) throw new Error("Particle capacity must be positive.");
+    this.particleCapacity = Math.floor(options.particleCapacity);
+    const geometry = createParticleGeometry(this.particleCapacity);
     this.sceneObject = new Points(
       geometry,
-      createParticleMaterial(pixelRatio, this.fallbackRouteTexture),
+      createParticleMaterial(options.pixelRatio, options.wind, this.fallbackRouteTexture),
     );
     this.sceneObject.frustumCulled = false;
     this.sceneObject.renderOrder = 10;
-    this.sceneObject.geometry.setDrawRange(0, 0);
+    geometry.setDrawRange(0, 0);
   }
 
-  resample(
-    sources: readonly ScentSource[],
-    particlesPerEmitter: number,
-    routeAtlas?: MovementRouteAtlas,
-  ): void {
-    const particleCount = clampParticlesPerEmitter(particlesPerEmitter);
-    this.setRouteAtlas(routeAtlas);
-    this.renderedCount = sampleSources(
+  resample(sourceSet: ScentSourceSet): void {
+    const requestedCount = getRequestedParticleCount(sourceSet);
+    if (requestedCount > this.particleCapacity) {
+      throw new Error("Particle capacity exceeded.");
+    }
+
+    this.setRouteAtlas(sourceSet.routedSources?.routeAtlas);
+    this.renderedCount = sampleSourceSet(
       getParticleAttributes(this.sceneObject.geometry),
-      sources,
-      particleCount,
+      sourceSet,
     );
     this.sceneObject.geometry.setDrawRange(0, this.renderedCount);
   }
@@ -190,8 +101,8 @@ export class ScentParticles {
     return this.renderedCount;
   }
 
-  setTime(time: number): void {
-    this.sceneObject.material.uniforms.uTime!.value = time;
+  setTime(elapsedSeconds: number): void {
+    this.sceneObject.material.uniforms.uTime!.value = elapsedSeconds;
   }
 
   setPixelRatio(pixelRatio: number): void {
@@ -210,7 +121,6 @@ export class ScentParticles {
     uniforms.uRouteSampleCount!.value = routeAtlas?.sampleCount ?? 1;
     uniforms.uRouteCount!.value = routeAtlas?.routeCount ?? 1;
   }
-
 }
 
 type ParticleAttributes = Readonly<{
@@ -223,6 +133,17 @@ type ParticleAttributes = Readonly<{
   routeHandle: BufferAttribute;
 }>;
 
+type ScentEmitter =
+  | Readonly<{ kind: "static"; transform: Matrix4 }>
+  | Readonly<{ kind: "route"; routeHandle: MovementRouteHandle }>;
+
+type SourceSamplingSettings = Readonly<{
+  source: ScentSourceBase;
+  emitters: readonly ScentEmitter[];
+  attributes: ParticleAttributes;
+  startIndex: number;
+}>;
+
 type EmitterSamplingSettings = Readonly<{
   sampler: MeshSurfaceSampler;
   emitter: ScentEmitter;
@@ -233,7 +154,7 @@ type EmitterSamplingSettings = Readonly<{
 }>;
 
 type ParticlePropertySampler = Readonly<{
-  settings: ScentParticleSettings;
+  properties: ScentParticleProperties;
   minimumColor: Color;
   maximumColor: Color;
   sampledColor: Color;
@@ -265,13 +186,6 @@ function createParticleGeometry(particleCapacity: number): BufferGeometry {
   return geometry;
 }
 
-function clampParticlesPerEmitter(count: number): number {
-  return Math.min(
-    MAX_PARTICLES_PER_EMITTER,
-    Math.max(MIN_PARTICLES_PER_EMITTER, Math.floor(count)),
-  );
-}
-
 function getParticleAttributes(geometry: BufferGeometry): ParticleAttributes {
   return {
     attachmentSeconds: geometry.getAttribute("aAttachmentSeconds") as BufferAttribute,
@@ -284,33 +198,84 @@ function getParticleAttributes(geometry: BufferGeometry): ParticleAttributes {
   };
 }
 
-function sampleSources(
+function getRequestedParticleCount(sourceSet: ScentSourceSet): number {
+  const staticCount = sourceSet.staticSources.reduce(
+    (total, source) => total + source.transforms.length * getParticleCount(source),
+    0,
+  );
+  const routedCount = sourceSet.routedSources?.sources.reduce(
+    (total, source) => total + source.routeHandles.length * getParticleCount(source),
+    0,
+  );
+  return staticCount + (routedCount ?? 0);
+}
+
+function sampleSourceSet(
   attributes: ParticleAttributes,
-  sources: readonly ScentSource[],
-  particlesPerEmitter: number,
+  sourceSet: ScentSourceSet,
+): number {
+  const staticCount = sampleStaticSources(attributes, sourceSet.staticSources);
+  const renderedCount = sampleRoutedSources(
+    attributes,
+    sourceSet.routedSources?.sources ?? [],
+    staticCount,
+  );
+  markAttributesForUpdate(attributes);
+  return renderedCount;
+}
+
+function sampleStaticSources(
+  attributes: ParticleAttributes,
+  sources: readonly StaticScentSource[],
 ): number {
   let particleIndex = 0;
   for (const source of sources) {
-    const sampler = new MeshSurfaceSampler(new Mesh(source.samplingSurface)).build();
-    const propertySampler = createParticlePropertySampler(source.particleSettings);
-    for (const emitter of source.emitters) {
-      particleIndex = sampleEmitter({
-        sampler,
-        emitter,
-        attributes,
-        startIndex: particleIndex,
-        particleCount: particlesPerEmitter,
-        propertySampler,
-      });
-    }
+    particleIndex = sampleSource({
+      source,
+      emitters: source.transforms.map((transform) => ({ kind: "static", transform })),
+      attributes,
+      startIndex: particleIndex,
+    });
   }
-  markAttributesForUpdate(attributes);
+  return particleIndex;
+}
+
+function sampleRoutedSources(
+  attributes: ParticleAttributes,
+  sources: readonly RoutedScentSource[],
+  startIndex: number,
+): number {
+  let particleIndex = startIndex;
+  for (const source of sources) {
+    particleIndex = sampleSource({
+      source,
+      emitters: source.routeHandles.map((routeHandle) => ({ kind: "route", routeHandle })),
+      attributes,
+      startIndex: particleIndex,
+    });
+  }
+  return particleIndex;
+}
+
+function sampleSource(settings: SourceSamplingSettings): number {
+  let particleIndex = settings.startIndex;
+  const sampler = getSurfaceSampler(settings.source.samplingSurface);
+  const propertySampler = createParticlePropertySampler(settings.source.particleProperties);
+  for (const emitter of settings.emitters) {
+    particleIndex = sampleEmitter({
+      sampler,
+      emitter,
+      attributes: settings.attributes,
+      startIndex: particleIndex,
+      particleCount: getParticleCount(settings.source),
+      propertySampler,
+    });
+  }
   return particleIndex;
 }
 
 function sampleEmitter(settings: EmitterSamplingSettings): number {
-  const { sampler, emitter, attributes, startIndex, particleCount, propertySampler } =
-    settings;
+  const { sampler, emitter, attributes, startIndex, particleCount, propertySampler } = settings;
   const point = new Vector3();
   const normal = new Vector3();
   const normalMatrix =
@@ -324,6 +289,18 @@ function sampleEmitter(settings: EmitterSamplingSettings): number {
     writeParticleProperties(attributes, particleIndex, propertySampler);
   }
   return startIndex + particleCount;
+}
+
+function getSurfaceSampler(geometry: BufferGeometry): MeshSurfaceSampler {
+  const cachedSampler = surfaceSamplers.get(geometry);
+  if (cachedSampler) return cachedSampler;
+  const sampler = new MeshSurfaceSampler(new Mesh(geometry)).build();
+  surfaceSamplers.set(geometry, sampler);
+  return sampler;
+}
+
+function getParticleCount(source: ScentSourceBase): number {
+  return Math.max(0, Math.floor(source.particlesPerObject));
 }
 
 function transformSurfacePoint(
@@ -351,7 +328,7 @@ function writeRouteHandle(
   attributes.routeHandle.setXY(
     index,
     emitter.routeHandle.index,
-    emitter.routeHandle.duration,
+    emitter.routeHandle.durationSeconds,
   );
 }
 
@@ -360,27 +337,27 @@ function writeParticleProperties(
   index: number,
   sampler: ParticlePropertySampler,
 ): void {
-  const lifetime = sampleNumberRange(sampler.settings.lifetimeSeconds);
+  const lifetime = sampleNumberRange(sampler.properties.lifetimeSeconds);
   const color = sampler.sampledColor
     .copy(sampler.minimumColor)
     .lerp(sampler.maximumColor, Math.random());
   attributes.attachmentSeconds.setX(
     index,
-    sampleNumberRange(sampler.settings.attachmentSeconds),
+    sampleNumberRange(sampler.properties.attachmentSeconds),
   );
   attributes.color.setXYZ(index, color.r, color.g, color.b);
   attributes.lifetime.setX(index, lifetime);
   attributes.phase.setX(index, Math.random() * lifetime);
-  attributes.size.setX(index, sampleNumberRange(sampler.settings.pointSize));
+  attributes.size.setX(index, sampleNumberRange(sampler.properties.pointSize));
 }
 
 function createParticlePropertySampler(
-  settings: ScentParticleSettings,
+  properties: ScentParticleProperties,
 ): ParticlePropertySampler {
   return {
-    settings,
-    minimumColor: new Color(settings.color.minimum),
-    maximumColor: new Color(settings.color.maximum),
+    properties,
+    minimumColor: new Color(properties.color.minimum),
+    maximumColor: new Color(properties.color.maximum),
     sampledColor: new Color(),
   };
 }
@@ -399,13 +376,19 @@ function markAttributesForUpdate(attributes: ParticleAttributes): void {
   attributes.routeHandle.needsUpdate = true;
 }
 
-function createParticleMaterial(pixelRatio: number, fallbackRouteTexture: DataTexture): ShaderMaterial {
+function createParticleMaterial(
+  pixelRatio: number,
+  wind: WindSettings,
+  fallbackRouteTexture: DataTexture,
+): ShaderMaterial {
   return new ShaderMaterial({
     vertexShader,
     fragmentShader,
     uniforms: {
       uTime: { value: 0 },
       uPixelRatio: { value: pixelRatio },
+      uWindDirection: { value: new Vector3(...wind.windDirection) },
+      uWindSpeed: { value: wind.windSpeed },
       uRouteTexture: { value: fallbackRouteTexture },
       uRouteSampleCount: { value: 1 },
       uRouteCount: { value: 1 },
